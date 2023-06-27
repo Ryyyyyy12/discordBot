@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"kmuttBot/functions"
 	"kmuttBot/types/payload"
+	"kmuttBot/utils/config"
 	"os"
 	"os/signal"
 
@@ -21,7 +22,7 @@ var channel *discordgo.Channel
 func main() {
 
 	//Discord bot token
-	token := "MTExOTY1Mzg4NDk5OTIzNzg2Mw.GRYiWd.sMMxRpzJ4yBZUNQPvVyjOhfjtiuFQbAoFstk0E"
+	token := config.C.BotToken
 
 	// Create a new Discord session using the provided bot token.
 	var err error
