@@ -7,7 +7,6 @@ import (
 	"kmuttBot/utils/config"
 	"os"
 	"os/signal"
-
 	"syscall"
 	"time"
 
@@ -20,34 +19,35 @@ var prevGrade *payload.Welcome
 var channel *discordgo.Channel
 
 func main() {
-
-	//Discord bot token
+	// Discord bot token
 	token := config.C.BotToken
 
 	// Create a new Discord session using the provided bot token.
 	var err error
 	dg, err = discordgo.New("Bot " + token)
 	if err != nil {
-		fmt.Println("error creating Discord session,", err)
+		fmt.Println("error creating Discord session:", err)
 		return
 	}
 
 	// Register the messageCreate func as a callback for MessageCreate events.
 	dg.AddHandler(messageCreate)
 
-	// recive message events in guilds (server)
-	dg.Identify.Intents = discordgo.IntentGuildMessages
+	// Receive message events in guilds (server)
+	//dg.Identify.Intents = discordgo.IntentGuildMessages
+	dg.Identify.Intents = discordgo.IntentDirectMessages
+
 	// Open a websocket connection to Discord and begin listening.
 	err = dg.Open()
 	if err != nil {
-		fmt.Println("error opening connection,", err)
+		fmt.Println("error opening connection:", err)
 		return
 	}
 
-	//schedule gradeCheck
+	// Schedule gradeCheck
 	s := gocron.NewScheduler(time.UTC)
 	_, err = s.Every(3).Seconds().Do(func() {
-		gradeCheck(channel, s)
+		GradeCheck(channel, s)
 	})
 	if err != nil {
 		fmt.Println("error scheduling gradeCheck:", err)
@@ -66,14 +66,13 @@ func main() {
 }
 
 func messageCreate(s *discordgo.Session, m *discordgo.MessageCreate) {
-
 	// Ignore all messages created by the bot itself
 	if m.Author.ID == s.State.User.ID {
 		return
 	}
 
-	if m.Content == "grade" {
-		// We create the private channel with the user who sent the message.
+	if m.Content == config.C.Text1 {
+		// Create the private channel with the user who sent the message.
 		var err error
 		channel, err = s.UserChannelCreate(m.Author.ID)
 		if err != nil {
@@ -87,7 +86,7 @@ func messageCreate(s *discordgo.Session, m *discordgo.MessageCreate) {
 		}
 
 		// Send the initial message
-		_, err = s.ChannelMessageSend(channel.ID, "Current Grade")
+		_, err = s.ChannelMessageSend(channel.ID, "Grade 📌: year 2/2")
 		if err != nil {
 			fmt.Println("error sending DM message:", err)
 			return
@@ -102,7 +101,7 @@ func messageCreate(s *discordgo.Session, m *discordgo.MessageCreate) {
 		}
 		for _, v := range grade.GradeInfo.Grades {
 			for _, v2 := range v.Courses {
-				_, err = s.ChannelMessageSend(channel.ID, v2.CourseCode+" "+v2.CourseNameTh+" "+v2.CourseNameEn+" Grade : "+v2.CourseGrade)
+				_, err = s.ChannelMessageSend(channel.ID, v2.CourseCode+" "+v2.CourseNameEn+" Grade : "+"**"+v2.CourseGrade+"**")
 			}
 		}
 
@@ -116,10 +115,41 @@ func messageCreate(s *discordgo.Session, m *discordgo.MessageCreate) {
 		}
 	}
 
+	if m.Content == config.C.Text2 {
+
+		// Create the private channel with the user who sent the message.
+		var err error
+		channel, err = s.UserChannelCreate(m.Author.ID)
+		if err != nil {
+			// If an error occurred, we failed to create the channel.
+			fmt.Println("error creating channel:", err)
+			s.ChannelMessageSend(
+				m.ChannelID,
+				"Something went wrong while sending the DM!",
+			)
+			return
+		}
+
+		// Check grade
+		GradeCheckDM(channel)
+
+		if err != nil {
+			fmt.Println("error sending DM message:", err)
+			s.ChannelMessageSend(
+				m.ChannelID,
+				"Failed to send you a DM.")
+		}
+
+	}
+	if m.Content != config.C.Text1 && m.Content != config.C.Text2 {
+		s.ChannelMessageSend(m.ChannelID, "Aep Du lor, pai ask cherry na 😔")
+	}
+
 }
 
-func gradeCheck(channel *discordgo.Channel, s *gocron.Scheduler) {
-	//fmt.Println("checking grade")
+// GradeCheck checks the grades and sends notifications
+func GradeCheck(channel *discordgo.Channel, s *gocron.Scheduler) {
+	//fmt.Println("checking grade 📌")
 	grade, err := functions.GetGrade()
 	if err != nil {
 		fmt.Println(err)
@@ -140,9 +170,10 @@ func gradeCheck(channel *discordgo.Channel, s *gocron.Scheduler) {
 			for _, v3 := range prevGrade.GradeInfo.Grades {
 				for _, v4 := range v3.Courses {
 					if v2.CourseCode == v4.CourseCode {
-						if v2.CourseGrade != v4.CourseGrade {
-							//send message
-							_, err := dg.ChannelMessageSend(channel.ID, v2.CourseCode+" "+v2.CourseNameTh+" "+v2.CourseNameEn+" Grade : "+v2.CourseGrade)
+						if v2.CourseGrade != v4.CourseGrade && channel != nil {
+							// Send message to DM
+							_, err := dg.ChannelMessageSend(channel.ID, "Grade ook laew na 🎉\n"+
+								v2.CourseCode+" "+v2.CourseNameEn+" Grade : "+v2.CourseGrade)
 							if err != nil {
 								fmt.Println("error sending DM message:", err)
 								return
@@ -150,7 +181,53 @@ func gradeCheck(channel *discordgo.Channel, s *gocron.Scheduler) {
 						}
 					}
 
-					//check if all courses are graded
+					// Check if all courses are graded
+					if v2.CourseGrade == "-" {
+						allGraded = false
+					}
+				}
+			}
+		}
+	}
+
+	if allGraded && channel != nil {
+		_, err := dg.ChannelMessageSend(channel.ID, "All courses are graded✨")
+		if err != nil {
+			fmt.Println("error sending DM message:", err)
+			return
+		}
+
+		// Stop gradeCheck
+		s.Stop()
+	}
+
+	prevGrade = grade
+
+}
+
+// GradeCheck checks the grades and sends notifications
+func GradeCheckDM(channel *discordgo.Channel) {
+	//fmt.Println("checking gradeDM 📌")
+	grade, err := functions.GetGrade()
+	if err != nil {
+		fmt.Println(err)
+		fmt.Println("error getting grade")
+		return
+	}
+
+	if prevGrade == nil {
+		prevGrade = grade
+		return
+	}
+
+	// Add a flag to track if all courses are graded
+	allGraded := true
+
+	for _, v := range grade.GradeInfo.Grades {
+		for _, v2 := range v.Courses {
+			for _, v3 := range prevGrade.GradeInfo.Grades {
+				for range v3.Courses {
+					// Check if all courses are graded
 					if v2.CourseGrade == "-" {
 						allGraded = false
 					}
@@ -160,16 +237,20 @@ func gradeCheck(channel *discordgo.Channel, s *gocron.Scheduler) {
 	}
 
 	if allGraded {
-		_, err := dg.ChannelMessageSend(channel.ID, "All courses are graded")
+		_, err := dg.ChannelMessageSend(channel.ID, "grade ook kob laew na ✨")
 		if err != nil {
 			fmt.Println("error sending DM message:", err)
 			return
 		}
+	}
 
-		//stop gradeCheck
-		s.Stop()
+	if !allGraded {
+		_, err := dg.ChannelMessageSend(channel.ID, "grade ook yung mai kob 😔")
+		if err != nil {
+			fmt.Println("error sending DM message:", err)
+			return
+		}
 	}
 
 	prevGrade = grade
-
 }
